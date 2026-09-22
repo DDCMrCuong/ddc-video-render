@@ -18,8 +18,12 @@ jobs:
           ${{ toJson(github.event.client_payload.scenes) }}
           EOF
 
-      - name: Cài Python deps (không cần gì thêm, chỉ dùng thư viện chuẩn)
-        run: python3 --version && ffmpeg -version | head -1
+      - name: Cài FFmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffmpeg -version | head -1
+          ffprobe -version | head -1
 
       - name: Render video
         id: render
