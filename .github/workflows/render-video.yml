@@ -22,9 +22,11 @@ jobs:
         run: python3 --version && ffmpeg -version | head -1
 
       - name: Render video
+        id: render
         run: |
           mkdir -p output
-          python3 scripts/render.py scenes.json output/final.mp4
+          set -o pipefail
+          python3 scripts/render.py scenes.json output/final.mp4 2>&1 | tee render.log
 
       - name: Tạo tag phát hành
         id: tag
@@ -50,6 +52,23 @@ jobs:
       - name: Gọi callback báo lỗi (nếu render thất bại)
         if: failure() && github.event.client_payload.callback_url != ''
         run: |
-          curl -s -X POST "${{ github.event.client_payload.callback_url }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"video_id\": \"${{ github.event.client_payload.video_id }}\", \"status\": \"error\"}"
+          python3 - <<'PYEOF'
+          import json, urllib.request, os
+          log = ""
+          if os.path.exists("render.log"):
+              with open("render.log", "r", errors="replace") as f:
+                  log = f.read()[-3000:]
+          payload = json.dumps({
+              "video_id": "${{ github.event.client_payload.video_id }}",
+              "status": "error",
+              "error_log": log,
+              "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }).encode()
+          req = urllib.request.Request(
+              "${{ github.event.client_payload.callback_url }}",
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST"
+          )
+          urllib.request.urlopen(req, timeout=30)
+          PYEOF
