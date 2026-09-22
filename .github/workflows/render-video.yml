@@ -1,0 +1,55 @@
+name: Render Video
+
+on:
+  repository_dispatch:
+    types: [render_video]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ghi scenes.json từ payload
+        run: |
+          cat <<'EOF' > scenes.json
+          ${{ toJson(github.event.client_payload.scenes) }}
+          EOF
+
+      - name: Cài Python deps (không cần gì thêm, chỉ dùng thư viện chuẩn)
+        run: python3 --version && ffmpeg -version | head -1
+
+      - name: Render video
+        run: |
+          mkdir -p output
+          python3 scripts/render.py scenes.json output/final.mp4
+
+      - name: Tạo tag phát hành
+        id: tag
+        run: echo "tag=render-${{ github.event.client_payload.video_id }}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Đăng GitHub Release kèm video
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Video ${{ github.event.client_payload.video_id }}"
+          files: output/final.mp4
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Gọi callback báo n8n
+        if: github.event.client_payload.callback_url != ''
+        run: |
+          ASSET_URL=$(echo '${{ steps.release.outputs.url }}' | sed 's#/tag/#/download/#')/final.mp4
+          curl -s -X POST "${{ github.event.client_payload.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"video_id\": \"${{ github.event.client_payload.video_id }}\", \"status\": \"success\", \"video_url\": \"$ASSET_URL\"}"
+
+      - name: Gọi callback báo lỗi (nếu render thất bại)
+        if: failure() && github.event.client_payload.callback_url != ''
+        run: |
+          curl -s -X POST "${{ github.event.client_payload.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"video_id\": \"${{ github.event.client_payload.video_id }}\", \"status\": \"error\"}"
