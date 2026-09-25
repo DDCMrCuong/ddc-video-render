@@ -27,6 +27,14 @@ import urllib.request
 FPS = 25
 H_WIDTH, H_HEIGHT = 1920, 1080   # ngang - YouTube
 V_WIDTH, V_HEIGHT = 1080, 1920   # dọc - TikTok/Facebook
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+# Màu thương hiệu theo kênh
+BRAND_COLORS = {
+    "DDC Hữu Cơ": "0x2E7D32",   # xanh lá - hữu cơ
+    "CheckFarm": "0x00695C",    # xanh teal - chuyên nghiệp/công nghệ
+}
+DEFAULT_BRAND_COLOR = "0x2E7D32"
 
 
 def download(url, dest):
@@ -99,6 +107,48 @@ def render_scene_vertical(image_path, audio_path, out_path, duration):
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
+def add_watermark(in_path, out_path, channel_text, width, height):
+    """Chèn watermark tên kênh mờ ở góc dưới phải, xuyên suốt video."""
+    fontsize = max(int(width * 0.022), 20)
+    margin = int(width * 0.03)
+    drawtext = (
+        f"drawtext=fontfile={FONT_PATH}:text='{channel_text}':"
+        f"fontsize={fontsize}:fontcolor=white@0.55:"
+        f"x=w-tw-{margin}:y=h-th-{margin}:"
+        f"box=1:boxcolor=black@0.25:boxborderw=10"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-i", in_path,
+        "-vf", drawtext,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        out_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
+def render_brand_card(text_lines, out_path, width, height, bg_color, duration=2.5):
+    """Thẻ thương hiệu (intro/outro): nền màu thương hiệu + chữ căn giữa + audio câm."""
+    text = text_lines.replace("'", "\u2019")
+    fontsize = max(int(width * 0.06), 36)
+    drawtext = (
+        f"drawtext=fontfile={FONT_PATH}:text='{text}':"
+        f"fontsize={fontsize}:fontcolor=white:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=20"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=c={bg_color}:s={width}x{height}:d={duration}:r={FPS}",
+        "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo",
+        "-vf", drawtext,
+        "-t", str(duration),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "160k",
+        "-shortest", out_path
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
 def concat_scenes(scene_files, out_path):
     list_path = out_path + ".list.txt"
     with open(list_path, "w") as f:
@@ -110,18 +160,41 @@ def concat_scenes(scene_files, out_path):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Dùng: python3 render.py scenes.json output_dir/")
+    if len(sys.argv) not in (3, 4):
+        print("Dùng: python3 render.py scenes.json output_dir/ [meta.json]")
         sys.exit(1)
 
     scenes_json_path, output_dir = sys.argv[1], sys.argv[2]
+    meta_json_path = sys.argv[3] if len(sys.argv) == 4 else None
+
     with open(scenes_json_path) as f:
         scenes = json.load(f)
+
+    render_mode = "standard"
+    channel = ""
+    if meta_json_path and os.path.exists(meta_json_path):
+        with open(meta_json_path) as f:
+            meta = json.load(f)
+        render_mode = meta.get("render_mode") or "standard"
+        channel = meta.get("channel") or ""
+    branded = render_mode == "branded"
+    brand_color = BRAND_COLORS.get(channel, DEFAULT_BRAND_COLOR)
+    print(f"Render mode: {render_mode} | Kênh: {channel or '(không xác định)'}")
 
     os.makedirs("work", exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
 
     h_files, v_files = [], []
+
+    if branded:
+        print("Tạo thẻ intro thương hiệu...")
+        intro_h = "work/intro_h.mp4"
+        intro_v = "work/intro_v.mp4"
+        render_brand_card(channel or "DDC Media", intro_h, H_WIDTH, H_HEIGHT, brand_color)
+        render_brand_card(channel or "DDC Media", intro_v, V_WIDTH, V_HEIGHT, brand_color)
+        h_files.append(intro_h)
+        v_files.append(intro_v)
+
     for i, scene in enumerate(scenes, start=1):
         print(f"Scene {i}/{len(scenes)}")
         img_path = f"work/scene{i}.jpg"
@@ -135,8 +208,26 @@ def main():
         duration = get_audio_duration(audio_path)
         render_scene_horizontal(img_path, audio_path, h_out, duration)
         render_scene_vertical(img_path, audio_path, v_out, duration)
+
+        if branded and channel:
+            h_wm = f"work/scene{i}_h_wm.mp4"
+            v_wm = f"work/scene{i}_v_wm.mp4"
+            add_watermark(h_out, h_wm, channel, H_WIDTH, H_HEIGHT)
+            add_watermark(v_out, v_wm, channel, V_WIDTH, V_HEIGHT)
+            h_out, v_out = h_wm, v_wm
+
         h_files.append(h_out)
         v_files.append(v_out)
+
+    if branded:
+        print("Tạo thẻ outro thương hiệu...")
+        outro_h = "work/outro_h.mp4"
+        outro_v = "work/outro_v.mp4"
+        cta = (channel or "DDC Media") + "\nTheo dõi để xem thêm"
+        render_brand_card(cta, outro_h, H_WIDTH, H_HEIGHT, brand_color)
+        render_brand_card(cta, outro_v, V_WIDTH, V_HEIGHT, brand_color)
+        h_files.append(outro_h)
+        v_files.append(outro_v)
 
     print("Nối bản NGANG...")
     concat_scenes(h_files, os.path.join(output_dir, "final_horizontal.mp4"))

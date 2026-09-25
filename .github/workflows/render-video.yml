@@ -21,6 +21,12 @@ jobs:
           ${{ toJson(github.event.client_payload.scenes) }}
           EOF
 
+      - name: Ghi meta.json (render_mode + channel)
+        run: |
+          cat <<'EOF' > meta.json
+          {"render_mode": "${{ github.event.client_payload.render_mode }}", "channel": "${{ github.event.client_payload.channel }}"}
+          EOF
+
       - name: Cài FFmpeg
         run: |
           sudo apt-get update -qq
@@ -33,7 +39,7 @@ jobs:
         run: |
           mkdir -p output
           set -o pipefail
-          python3 scripts/render.py scenes.json output/ 2>&1 | tee render.log
+          python3 scripts/render.py scenes.json output/ meta.json 2>&1 | tee render.log
 
       - name: Tạo tag phát hành
         id: tag
