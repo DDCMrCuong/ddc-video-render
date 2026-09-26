@@ -29,12 +29,18 @@ H_WIDTH, H_HEIGHT = 1920, 1080   # ngang - YouTube
 V_WIDTH, V_HEIGHT = 1080, 1920   # dọc - TikTok/Facebook
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-# Màu thương hiệu theo kênh
+# Màu thương hiệu theo kênh (cả 2 kênh cùng hệ sinh thái CheckFarm)
 BRAND_COLORS = {
-    "DDC Hữu Cơ": "0x2E7D32",   # xanh lá - hữu cơ
-    "CheckFarm": "0x00695C",    # xanh teal - chuyên nghiệp/công nghệ
+    "CheckFarm - Nông Nghiệp Xanh": "0x2E7D32",   # xanh lá - chủ đề hữu cơ/xanh
+    "CheckFarm": "0x00695C",                       # xanh teal - công nghệ/chuyên nghiệp
 }
-DEFAULT_BRAND_COLOR = "0x2E7D32"
+DEFAULT_BRAND_COLOR = "0x00695C"
+
+# Nhãn ngắn cho watermark góc màn hình (tên đầy đủ dùng cho intro/outro)
+WATERMARK_LABELS = {
+    "CheckFarm - Nông Nghiệp Xanh": "CheckFarm",
+    "CheckFarm": "CheckFarm",
+}
 
 
 def download(url, dest):
@@ -190,8 +196,8 @@ def main():
         print("Tạo thẻ intro thương hiệu...")
         intro_h = "work/intro_h.mp4"
         intro_v = "work/intro_v.mp4"
-        render_brand_card(channel or "DDC Media", intro_h, H_WIDTH, H_HEIGHT, brand_color)
-        render_brand_card(channel or "DDC Media", intro_v, V_WIDTH, V_HEIGHT, brand_color)
+        render_brand_card(channel or "CheckFarm", intro_h, H_WIDTH, H_HEIGHT, brand_color)
+        render_brand_card(channel or "CheckFarm", intro_v, V_WIDTH, V_HEIGHT, brand_color)
         h_files.append(intro_h)
         v_files.append(intro_v)
 
@@ -212,8 +218,9 @@ def main():
         if branded and channel:
             h_wm = f"work/scene{i}_h_wm.mp4"
             v_wm = f"work/scene{i}_v_wm.mp4"
-            add_watermark(h_out, h_wm, channel, H_WIDTH, H_HEIGHT)
-            add_watermark(v_out, v_wm, channel, V_WIDTH, V_HEIGHT)
+            watermark_text = WATERMARK_LABELS.get(channel, channel)
+            add_watermark(h_out, h_wm, watermark_text, H_WIDTH, H_HEIGHT)
+            add_watermark(v_out, v_wm, watermark_text, V_WIDTH, V_HEIGHT)
             h_out, v_out = h_wm, v_wm
 
         h_files.append(h_out)
@@ -223,7 +230,7 @@ def main():
         print("Tạo thẻ outro thương hiệu...")
         outro_h = "work/outro_h.mp4"
         outro_v = "work/outro_v.mp4"
-        cta = (channel or "DDC Media") + "\nTheo dõi để xem thêm"
+        cta = (channel or "CheckFarm") + "\nTheo dõi để xem thêm"
         render_brand_card(cta, outro_h, H_WIDTH, H_HEIGHT, brand_color)
         render_brand_card(cta, outro_v, V_WIDTH, V_HEIGHT, brand_color)
         h_files.append(outro_h)
