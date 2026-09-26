@@ -59,56 +59,99 @@ def get_audio_duration(path):
     return float(out.stdout.strip())
 
 
-def render_scene_horizontal(image_path, audio_path, out_path, duration):
-    """Ken Burns ngang 16:9, giống bản gốc."""
+def render_scene_horizontal(image_path, audio_path, out_path, duration, logo_path=None):
+    """Ken Burns ngang 16:9, giống bản gốc. Logo CheckFarm luôn ở góc trái trên nếu có."""
     frames = max(int(duration * FPS), FPS)
     zoompan = (
         f"scale={H_WIDTH*2}:{H_HEIGHT*2},"
         f"zoompan=z='min(zoom+0.0006,1.15)':d={frames}:s={H_WIDTH}x{H_HEIGHT}:fps={FPS}"
     )
-    cmd = [
-        "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
-        "-filter_complex", f"[0:v]{zoompan}[v]",
-        "-map", "[v]", "-map", "1:a",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "160k",
-        "-t", str(duration),
-        "-shortest", out_path
-    ]
+    if logo_path and os.path.exists(logo_path):
+        logo_size = int(H_WIDTH * 0.07)
+        margin = int(H_WIDTH * 0.02)
+        filter_complex = (
+            f"[0:v]{zoompan}[base];"
+            f"[2:v]scale={logo_size}:-1[logo];"
+            f"[base][logo]overlay={margin}:{margin}[v]"
+        )
+        cmd = [
+            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "-i", logo_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "1:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k",
+            "-t", str(duration),
+            "-shortest", out_path
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-y", "-loop", "1", "-i", image_path, "-i", audio_path,
+            "-filter_complex", f"[0:v]{zoompan}[v]",
+            "-map", "[v]", "-map", "1:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k",
+            "-t", str(duration),
+            "-shortest", out_path
+        ]
     print(f"  Render scene NGANG: {out_path} ({duration:.1f}s)")
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def render_scene_vertical(image_path, audio_path, out_path, duration):
+def render_scene_vertical(image_path, audio_path, out_path, duration, logo_path=None):
     """
     Ken Burns dọc 9:16 cho TikTok/Facebook - ảnh gốc (16:9) được:
     - Lớp nền: phóng to lấp đầy khung dọc + làm mờ mạnh (che phần thừa)
     - Lớp trước: giữ nguyên toàn bộ ảnh gốc, canh giữa, áp Ken Burns
     Không cắt mất chi tiết ảnh gốc như crop thẳng sẽ làm.
+    Logo CheckFarm luôn ở góc trái trên nếu có.
     """
     frames = max(int(duration * FPS), FPS)
     zoompan_fg = (
         f"scale={V_WIDTH*2}:-2,"
         f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:s={V_WIDTH}x{round(V_WIDTH*9/16)}:fps={FPS}"
     )
-    filter_complex = (
+    base_filter = (
         f"[0:v]scale={V_WIDTH}:{V_HEIGHT}:force_original_aspect_ratio=increase,"
         f"crop={V_WIDTH}:{V_HEIGHT},gblur=sigma=30,eq=brightness=-0.05[bg];"
         f"[1:v]{zoompan_fg}[fg];"
-        f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v]"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base]"
     )
-    cmd = [
-        "ffmpeg", "-y",
-        "-loop", "1", "-i", image_path,
-        "-loop", "1", "-i", image_path,
-        "-i", audio_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "2:a",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "160k",
-        "-t", str(duration),
-        "-shortest", out_path
-    ]
+    if logo_path and os.path.exists(logo_path):
+        logo_size = int(V_WIDTH * 0.11)
+        margin = int(V_WIDTH * 0.03)
+        filter_complex = (
+            base_filter + ";"
+            f"[3:v]scale={logo_size}:-1[logo];"
+            f"[base][logo]overlay={margin}:{margin}[v]"
+        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-i", image_path,
+            "-loop", "1", "-i", image_path,
+            "-i", audio_path,
+            "-loop", "1", "-i", logo_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "2:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k",
+            "-t", str(duration),
+            "-shortest", out_path
+        ]
+    else:
+        filter_complex = base_filter.replace("[base]", "[v]")
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-i", image_path,
+            "-loop", "1", "-i", image_path,
+            "-i", audio_path,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "2:a",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k",
+            "-t", str(duration),
+            "-shortest", out_path
+        ]
     print(f"  Render scene DỌC: {out_path} ({duration:.1f}s)")
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -201,6 +244,10 @@ def main():
         h_files.append(intro_h)
         v_files.append(intro_v)
 
+    LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "logo.png")
+    has_logo = os.path.exists(LOGO_PATH)
+    print(f"Logo CheckFarm: {'có' if has_logo else 'KHÔNG tìm thấy, bỏ qua'} ({LOGO_PATH})")
+
     for i, scene in enumerate(scenes, start=1):
         print(f"Scene {i}/{len(scenes)}")
         img_path = f"work/scene{i}.jpg"
@@ -212,16 +259,8 @@ def main():
         download(scene["audio_url"], audio_path)
 
         duration = get_audio_duration(audio_path)
-        render_scene_horizontal(img_path, audio_path, h_out, duration)
-        render_scene_vertical(img_path, audio_path, v_out, duration)
-
-        if branded and channel:
-            h_wm = f"work/scene{i}_h_wm.mp4"
-            v_wm = f"work/scene{i}_v_wm.mp4"
-            watermark_text = WATERMARK_LABELS.get(channel, channel)
-            add_watermark(h_out, h_wm, watermark_text, H_WIDTH, H_HEIGHT)
-            add_watermark(v_out, v_wm, watermark_text, V_WIDTH, V_HEIGHT)
-            h_out, v_out = h_wm, v_wm
+        render_scene_horizontal(img_path, audio_path, h_out, duration, logo_path=LOGO_PATH if has_logo else None)
+        render_scene_vertical(img_path, audio_path, v_out, duration, logo_path=LOGO_PATH if has_logo else None)
 
         h_files.append(h_out)
         v_files.append(v_out)
