@@ -64,7 +64,7 @@ def run(cmd):
 
 # ---------------------------------------------------------------- tải file
 def drive_id(url):
-    m = re.search(r"[?&]id=([w-]+)", url) or re.search(r"/d/([w-]+)", url)
+    m = re.search(r"[?&]id=([\w-]+)", url) or re.search(r"/d/([\w-]+)", url)
     return m.group(1) if m else None
 
 
@@ -203,7 +203,7 @@ def render_canva_scene(clip, audio, duration, w, h, out):
 
 
 def render_brand_card(text, out, w, h, color, duration=2.5):
-    text = text.replace("'", "’").replace(":", "\:")
+    text = text.replace("'", "’").replace(":", "\\:")
     fs = max(int(w * 0.06), 36)
     run(["ffmpeg", "-y",
          "-f", "lavfi", "-i", f"color=c={color}:s={w}x{h}:d={duration}:r={FPS}",
@@ -217,8 +217,7 @@ def concat(files, out):
     lst = out + ".list.txt"
     with open(lst, "w") as f:
         for p in files:
-            f.write(f"file '{os.path.abspath(p)}'
-")
+            f.write(f"file '{os.path.abspath(p)}'\n")
     run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy",
          "-movflags", "+faststart", out])
 
@@ -307,8 +306,7 @@ def main():
         v_files.append(v_out)
 
     if branded:
-        cta = (channel or "CheckFarm") + "
-Theo dõi để xem thêm"
+        cta = (channel or "CheckFarm") + "\nTheo dõi để xem thêm"
         render_brand_card(cta, "work/outro_h.mp4", H_WIDTH, H_HEIGHT, color)
         render_brand_card(cta, "work/outro_v.mp4", V_WIDTH, V_HEIGHT, color)
         h_files.append("work/outro_h.mp4")
