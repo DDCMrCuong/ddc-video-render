@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-DDC Media AI Factory - Video Render Engine (v2: hỗ trợ ảnh + clip video thật)
+DDC Media AI Factory - Video Render Engine
+(v2: hỗ trợ ảnh + clip video thật | v3: hỗ trợ scene render sẵn từ Canva)
 
 Mỗi scene trong scenes.json có:
   - image_url  (ảnh: AI sinh hoặc ảnh thật trong Drive)  HOẶC
   - video_url  (clip video thật trong Drive)
   - audio_url  (giọng đọc narration, tuỳ chọn)
   - duration   (giây, tuỳ chọn khi không có audio)
+  - source     (tuỳ chọn; "canva" đánh dấu scene đã được Canva Autofill/Export
+                 dựng sẵn (ảnh/video + tiêu đề + caption + logo brand template),
+                 giá trị đặt trong video_url là link MP4 do Canva xvất ra)
 
 Quy tắc thời lượng:
   - Có audio_url  -> scene dài đúng bằng giọng đọc (clip video được lặp/cắt cho khớp,
@@ -14,8 +18,12 @@ Quy tắc thời lượng:
   - Không audio   -> ảnh: duration hoặc 5s; video: độ dài clip (tối đa 30s), giữ tiếng gốc
 
 Mọi ảnh/clip giữ nguyên tỷ lệ (không méo): đặt vừa khung + nền mờ phóng to phía sau.
+Riêng scene source="canva": ĐÃ được Canva compose sẵn (ảnh/video + text + logo theo
+brand template), nên KHÔNG áp lại blur-letterbox/logo — chỉ chuẩn hoá độ phân giải/fps
+(letterbox đen nếu lệch tỉ lệ, không crop để không mất phần đã dàn trang) và gắn
+narration audio (Canva không tự sinh audio).
 Render CẢ 2 bản: output/final_horizontal.mp4 (1920x1080) + output/final_vertical.mp4 (1080x1920).
-Logo CheckFarm (assets/logo.png) luôn ở góc trái trên.
+Logo CheckFarm (assets/logo.png) luôn ở góc trái trên (trừ scene nguồn Canva, đã có logo sẵn).
 
 Cách dùng: python3 render.py scenes.json output/ [meta.json]
 """
@@ -108,9 +116,9 @@ def has_audio(path):
     return bool(r.stdout.strip())
 
 
-# ---------------------------------------------------------------- dựng khung
+# ----------------------------------------------------------------- dựng khung
 def fit_blur_filter(src, w, h, out):
-    """Giữ nguyên tỷ lệ: nền = bản phóng to lấp đầy + mờ; trước = bản vừa khung canh giữa."""
+    """Giữ nguyên tỷ lệ: nền = bản phóng to lấp đặy + mờ; trước = bản vừa khung canh giữa."""
     return (
         f"[{src}]split[bgsrc][fgsrc];"
         f"[bgsrc]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},"
@@ -166,7 +174,30 @@ def render_video_scene(clip, audio, duration, keep_clip_audio, w, h, logo, out):
         fc += ";" + logo_filter("fit", logo_idx, w, "v")
         last = "v"
     cmd = (["ffmpeg", "-y"] + inputs +
-           ["-filter_complex", fc, "-map", f"[{last}]", "-map", amap,
+           ["-filter_complex", fc, "-map", f"{{last}}", "-map", amap,
+            "-af", f"aresample={AR}", "-t", f"{duration:.3f}"] + VIDEO_ENC + AUDIO_ENC + [out])
+    run(cmd)
+
+
+def render_canva_scene(clip, audio, duration, w, h, out):
+    """Scene source="canva": clip MP4 đã được Canva Autofill+Export dựng sẵn TOÀN BỘ
+    (ảnh/video nền + scene_title + scene_caption + logo brand template) — KHÔNG áp
+    fit_blur_filter (crop+blur nền) và KHÔNG overlay logo CheckFarm (đã có sẵn trong
+    template), tránh vẽ chồng/crop mất nội dung đã dàn trang. Chỉ chuẩn hoá fps +
+    letterbox đen về đúng WxH (không crop) để nối (-c copy) mượt với các scene FFmpeg
+    khác, và gắn audio narration (audio_url) vì Canva không tự sinh audio."""
+    inputs = ["-stream_loop", "-1", "-i", clip]
+    if audio:
+        inputs += ["-i", audio]
+        amap = "1:a"
+    else:
+        inputs += ["-f", "lavfi", "-t", f"{duration:.3f}", "-i", f"anullsrc=r={AR}:cl=stereo"]
+        amap = "1:a"
+    fc = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,"
+          f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[v]")
+    cmd = (["ffmpeg", "-y"] + inputs +
+           ["-filter_complex", fc, "-map", "[v]", "-map", amap,
             "-af", f"aresample={AR}", "-t", f"{duration:.3f}"] + VIDEO_ENC + AUDIO_ENC + [out])
     run(cmd)
 
@@ -177,7 +208,7 @@ def render_brand_card(text, out, w, h, color, duration=2.5):
     run(["ffmpeg", "-y",
          "-f", "lavfi", "-i", f"color=c={color}:s={w}x{h}:d={duration}:r={FPS}",
          "-f", "lavfi", "-i", f"anullsrc=r={AR}:cl=stereo",
-         "-vf", f"drawtext=fontfile={FONT_PATH}:text='{text}':fontsize={fs}:fontcolor=white:"
+         "-vf", f"drawtext:fontfile={FONT_PATH}:text='{text}':fontsize={fs}:fontcolor=white:"
                 f"x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=20",
          "-t", str(duration)] + VIDEO_ENC + AUDIO_ENC + [out])
 
@@ -194,7 +225,7 @@ def concat(files, out):
 # ---------------------------------------------------------------- main
 def main():
     if len(sys.argv) not in (3, 4):
-        print("Dùng: python3 render.py scenes.json output_dir/ [meta.json]")
+        print("DŹng: python3 render.py scenes.json output_dir/ [meta.json]")
         sys.exit(1)
     scenes_path, out_dir = sys.argv[1], sys.argv[2]
     meta = {}
@@ -225,10 +256,11 @@ def main():
         v_files.append("work/intro_v.mp4")
 
     for i, s in enumerate(scenes, start=1):
+        source = (s.get("source") or "").strip().lower()
         video_url = (s.get("video_url") or "").strip()
         image_url = (s.get("image_url") or "").strip()
         audio_url = (s.get("audio_url") or "").strip()
-        kind = "VIDEO" if video_url else "ẢNH"
+        kind = "CANVA" if source == "canva" else ("VIDEO" if video_url else "ẢNH")
         print(f"Scene {i}/{len(scenes)} [{kind}]")
         if not video_url and not image_url:
             raise RuntimeError(f"Scene {s.get('scene_number')} không có image_url/video_url")
@@ -239,7 +271,19 @@ def main():
             download(audio_url, audio)
 
         h_out, v_out = f"work/s{i}_h.mp4", f"work/s{i}_v.mp4"
-        if video_url:
+        if source == "canva":
+            # Scene đã compose sẵn từ Canva (xem render_canva_scene) - bỏ qua nhánh
+            # blur-letterbox/logo FFmpeg bên dưới, chỉ chuẩn hoá + gắn audio narration.
+            clip = f"work/s{i}_canva"
+            download(video_url, clip)
+            if audio:
+                duration = probe_duration(audio)
+            else:
+                duration = float(s.get("duration") or probe_duration(clip) or DEFAULT_IMAGE_SEC)
+            print(f"  canva clip -> scene {duration:.1f}s (pass-through, không blur/logo)")
+            render_canva_scene(clip, audio, duration, H_WIDTH, H_HEIGHT, h_out)
+            render_canva_scene(clip, audio, duration, V_WIDTH, V_HEIGHT, v_out)
+        elif video_url:
             clip = f"work/s{i}_clip"
             download(video_url, clip)
             clip_len = probe_duration(clip) or DEFAULT_IMAGE_SEC
@@ -270,7 +314,7 @@ def main():
 
     print("Nối bản NGANG...")
     concat(h_files, os.path.join(out_dir, "final_horizontal.mp4"))
-    print("Nối bản DỌC...")
+    print("Nối bản ĐỌC...")
     concat(v_files, os.path.join(out_dir, "final_vertical.mp4"))
     print("Hoàn tất cả 2 bản.")
 
